@@ -3,12 +3,15 @@ REM ============================================================================
 REM  KVMem + ROCmFP4 + DFlash2 launcher (ASCII wrapper)
 REM  Logic and Chinese messages live in start-kvmem.ps1 (UTF-8 with BOM).
 REM
-REM  Usage:
-REM     start-kvmem.bat -Model "G:\models\Qwen3.8-27B-Q4_0_ROCMFP4_STRIX.gguf" ^
-REM                     -Draft "G:\models\Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
-REM     start-kvmem.bat -Model "..." -Context 262144 -Budget 36864 -Reserve 32768
-REM     start-kvmem.bat -Spec none         (close speculative decoding)
-REM     start-kvmem.bat -Model "...-mtp.gguf" -Spec mtp   (use MTP instead of DFlash2)
+REM  SIMPLEST USAGE: put your .gguf models into the models\ folder,
+REM  then double-click this file. It auto-detects everything.
+REM
+REM  Optional:
+REM     start-kvmem.bat -List                 list detected models only
+REM     start-kvmem.bat -DryRun               print the command, do not start
+REM     start-kvmem.bat -ModelsDir "D:\models"   use another model folder
+REM     start-kvmem.bat -Spec none            disable speculative decoding
+REM     start-kvmem.bat -Context 32768        smaller context, less VRAM
 REM ============================================================================
 setlocal EnableExtensions
 set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"

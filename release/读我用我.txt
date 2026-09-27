@@ -2,52 +2,60 @@
  KVMem + ROCmFP4 + DFlash2  ——  解压即用版
 ========================================================================
 
-1) 先看 bin\llama-kvmem-server.exe 是否存在（应有 107 MB 左右）
-   本包已自带 ROCm 7.2 运行库，无需另行安装 ROCm。
+ 三步走：
+   1) 解压本 ZIP
+   2) 把下载的 .gguf 模型丢进 models\ 目录
+      （下载清单见 models\把模型放这里.md）
+   3) 双击 start-kvmem.bat
 
-2) 准备模型（本包不含模型，需自行下载）：
-   ★ 主模型      Qwen3.8-27B-Q4_0_ROCMFP4_STRIX.gguf      (13.75 GB)
-   ★ DFlash2草稿 Qwen3.8-27B-DFlash2-Q4_K_M.gguf          (1.06 GB)
-                  来自 huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF
-
-3) 启动（在解压目录执行）：
-
-   .\start-kvmem.bat -Model "D:\models\Qwen3.8-27B-Q4_0_ROCMFP4_STRIX.gguf" ^
-                     -Draft "D:\models\Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
-
-   然后浏览器打开  http://127.0.0.1:18200/
+ 脚本会自动扫描 models\、识别主模型/DFlash2草稿/视觉投影器、
+ 自动组合最优配置并启动。浏览器打开 http://127.0.0.1:18200/
 
 ------------------------------------------------------------------------
- 常用变体
+ 需要哪些模型
 ------------------------------------------------------------------------
- 关闭推测解码（最省显存）：
-   .\start-kvmem.bat -Model "..." -Spec none
+ 【必需】主模型（二选一）
+   1) 推荐  Qwen3.8-27B-Q4_0_ROCMFP4_STRIX.gguf       13.75 GB
+            来源：https://github.com/charlie12345/rocmfp4-llama
+   2) 备选  Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf        11.29 GB
+            https://huggingface.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF
 
- 改用 MTP 加速（需模型名带 -mtp）：
-   .\start-kvmem.bat -Model "...IQ3_S-mtp.gguf" -Spec mtp
+ 【推荐】DFlash2 草稿模型（实测再快 24%）
+           Qwen3.8-27B-DFlash2-Q4_K_M.gguf             1.06 GB
+           https://huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF
+           国内镜像：https://hf-mirror.com/incoai/Qwen3.8-27B-DFlash2-GGUF
 
- 只打印将执行的命令（不启动）：
-   .\start-kvmem.bat -Model "..." -Draft "..." -DryRun
+ 【可选】视觉投影器（要输入图片时才需要）
+           mmproj-Qwen3.8-27B-BF16.gguf                0.87 GB
+           https://huggingface.co/HermiHg/Qwen3.8-27B-mmproj-Q5_K-MIX-GGUF
+
+ 代码仓里不放模型权重，请自行下载并遵守各自许可。
 
 ------------------------------------------------------------------------
- 性能提示（实测）
+ 常用参数（全都不填也能跑）
 ------------------------------------------------------------------------
- * 本包启动器默认【不传】 --threads 与 --flash-attn：
-   实测 --threads 0 让解码 51.5 → 26.6 tok/s，--flash-attn on 让 52.0 → 29.3 tok/s。
+   -List                  只列出识别到的模型，不启动
+   -DryRun                只打印将执行的命令
+   -ModelsDir "D:\models" 模型放在别的目录
+   -Spec none             关闭推测解码（最省显存）
+   -Spec mtp              强制用 MTP
+   -Context 32768         小上下文，省显存
+   -Reserve 131072        允许更长的单轮输出（更费显存）
+
+------------------------------------------------------------------------
+ 性能提示（实测于 RX 7900 XTX / gfx1100 / ROCm 7.2）
+------------------------------------------------------------------------
+ * 启动器默认【不传】 --threads 与 --flash-attn：
+   实测 --threads 0 让解码 51.5 -> 26.6 tok/s，
+        --flash-attn on 让 52.0 -> 29.3 tok/s。
    千万不要手动加这两项。
- * DFlash2 草稿数用 3 最佳（-DraftTokens 3）；调到 5/7 反而更慢。
- * 单轮生成长度受 --kvmem-gen-reserve（-Reserve）限制，含思考内容。
-   要写长文就调大 -Reserve，代价是更多显存。
-
-------------------------------------------------------------------------
- 参考实测（RX 7900 XTX / gfx1100，ROCm 7.2）
-------------------------------------------------------------------------
-   原生解码                38.8 tok/s
-   + DFlash2 (n_max=3)     48.1 tok/s（首次长生成，+24%）
-   峰值（3 秒窗口）        53.0 tok/s
+ * DFlash2 草稿数用 3 最佳（-DraftTokens 3）；5/7 反而更慢。
+ * 实测：原生 38.8 tok/s -> DFlash2 48.1 tok/s（+24%），
+   峰值（3 秒窗口）53.0 tok/s；256K 上下文几乎没有速度惩罚。
+ * 单轮生成长度受 -Reserve（--kvmem-gen-reserve）限制，含思考内容。
 
 ------------------------------------------------------------------------
  许可
 ------------------------------------------------------------------------
- 本包集成 KVMem / ROCmFP4 / DFlash2 / llama.cpp，署名与许可见
- LICENSE 与 THIRD_PARTY_NOTICES.md。模型权重不在本包内，请遵守各自条款。
+ 本包集成 KVMem / ROCmFP4 / DFlash2 / llama.cpp，
+ 署名与许可见 LICENSE 与 THIRD_PARTY_NOTICES.md。

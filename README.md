@@ -49,15 +49,49 @@
 
 ### 方式一：下载预编译包（推荐）
 
-1. 到 [Releases](../../releases) 下载 `kvmem-rocmfp4-gfx1100-windows-rocm7.2-selfcontained.zip` 并解压
-2. 下载模型（见下方[测试过的模型](#-测试过的模型--tested-models)）
-3. 运行：
+**三步，零参数：**
 
-```powershell
-.\start-kvmem.bat -Model "你的主模型.gguf" -Draft "DFlash2草稿.gguf"
+1. 到 [Releases](../../releases) 下载 `kvmem-rocmfp4-gfx1100-windows-rocm7.2-selfcontained.zip` 并解压
+2. 把下载好的 `.gguf` 模型**丢进包内的 `models\` 目录**（下载清单见 [`models\把模型放这里.md`](release/models/把模型放这里.md)）
+3. **双击 `start-kvmem.bat`**
+
+脚本会**自动扫描 `models\`**，识别出「主模型 / DFlash2 草稿 / 视觉投影器」，自动组合出最优配置并启动：
+
+```
+============================================================
+   KVMem + ROCmFP4 + DFlash2
+============================================================
+   模型目录: ...\models
+
+   扫描结果:
+      [视觉投影  ] mmproj-Qwen3.8-27B-BF16.gguf  (888.0 MB)  <- 选用
+      [DFlash2草稿] Qwen3.8-27B-DFlash2-Q4_K_M.gguf  (1.06 GB)  <- 选用
+      [主模型    ] Qwen3.8-27B-Q4_0_ROCMFP4_STRIX.gguf  (13.75 GB)  <- 选用
+
+   将使用:
+      主模型   : Qwen3.8-27B-Q4_0_ROCMFP4_STRIX.gguf
+      草稿模型 : Qwen3.8-27B-DFlash2-Q4_K_M.gguf
+      加速方式 : DFlash2（推荐，实测 +24%）
+      上下文   : 262144   检索窗口: 36864   单轮上限: 32768
+
+   界面: http://127.0.0.1:18200/
 ```
 
-浏览器打开 `http://127.0.0.1:18200/`。包内已含 ROCm 运行库（`amdhip64_7.dll` / `hipblas` / `rocblas`），**无需自行安装 ROCm**。
+浏览器打开 `http://127.0.0.1:18200/` 即可。包内已含 ROCm 运行库（`amdhip64_7.dll` / `hipblas` / `rocblas`），**无需自行安装 ROCm**。
+
+**没放模型会怎样？** 脚本会打印需要下载哪个文件、放哪里、下载链接是什么，然后退出——不会给你一堆看不懂的报错。
+
+**智能降级**：只有主模型没有 DFlash2 草稿时，会自动改用主模型自带的 MTP；两者都没有就自动关闭推测解码，并提示你去下载草稿模型。
+
+**可选参数**（都不需要就能跑）：
+
+```powershell
+.\start-kvmem.bat -List                    # 只列出识别结果，不启动
+.\start-kvmem.bat -DryRun                  # 只打印将执行的命令
+.\start-kvmem.bat -ModelsDir "D:\models"   # 模型放在别处
+.\start-kvmem.bat -Spec none               # 关闭推测解码
+.\start-kvmem.bat -Context 32768           # 小上下文，省显存
+```
 
 ### 方式二：从源码编译
 

@@ -61,6 +61,11 @@ Copy-Item (Join-Path $repoRoot 'release/读我用我.txt')     $stage -Force -Er
 Copy-Item (Join-Path $repoRoot 'LICENSE')                  $stage -Force
 Copy-Item (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md')   $stage -Force
 
+# models/ 空目录 + 下载说明（启动脚本会自动扫描这里）
+$modelsDst = Join-Path $stage 'models'
+New-Item -ItemType Directory -Force -Path $modelsDst | Out-Null
+Copy-Item (Join-Path $repoRoot 'release/models/*') $modelsDst -Force -Recurse -ErrorAction SilentlyContinue
+
 # Web UI（来自 llama.cpp / KVMem 的 MIT 许可前端）
 if (-not $UiSource) { $UiSource = Join-Path $repoRoot 'ui-src' }
 if (Test-Path (Join-Path $UiSource 'index.html')) {
