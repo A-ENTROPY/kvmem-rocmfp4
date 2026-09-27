@@ -1,0 +1,19 @@
+# Build outputs
+build-hip-win/
+build-hip-linux/
+build-*/
+llama.cpp/
+*.obj
+*.o
+*.lib
+*.exp
+*.pdb
+
+# Downloaded archives
+*.tar.gz
+*.zip
+
+# Local runtime artifacts
+kvmem-pkg-*/
+server.log
+config.json

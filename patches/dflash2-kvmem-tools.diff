@@ -1,0 +1,315 @@
+﻿diff --git a/tools/kvmem-multimodal-server.h b/tools/kvmem-multimodal-server.h
+index d60d157..25fb05f 100644
+--- a/tools/kvmem-multimodal-server.h
++++ b/tools/kvmem-multimodal-server.h
+@@ -49,7 +49,15 @@ static MultimodalCheckpoint multimodal_checkpoint(ServerState & st, int row) {
+     {
+         kvmem_scoped_ms carry_timer(st.mm_perf.carry_ms);
+         if (st.spec.ok && !common_speculative_get_state(st.spec.spec, 0, data->draft_carry)) {
+-            throw std::runtime_error("MTP carry checkpoint failed");
++            // Draft-model speculators (DFlash / DFlash2) do not expose a carry
++            // state: only the welded-nextn MTP implementation does. KVMem needs
++            // the carry solely for MTP replay rollback, so record an empty carry
++            // and let the drafter rebuild from the restored target KV.
++            if (st.spec_dflash) {
++                data->draft_carry.clear();
++            } else {
++                throw std::runtime_error("MTP carry checkpoint failed");
++            }
+         }
+     }
+     data->accounting = st.mm_checkpoint_accounting;
+@@ -93,10 +101,10 @@ static void multimodal_restore(ServerState & st, const MultimodalCheckpoint & ch
+     if (!llama_kvmem_remove_logical(st.ctx, checkpoint.row, -1)) {
+         throw std::runtime_error("cannot remove uncommitted target rows");
+     }
+-    if (st.spec.ctx_dft && !llama_kvmem_remove_logical(st.spec.ctx_dft, checkpoint.row, -1)) {
++    if (st.spec.ctx_dft && !kvmem_draft_rewind(st.spec.ctx_dft, checkpoint.row, st.spec_dflash)) {
+         throw std::runtime_error("cannot remove uncommitted MTP rows");
+     }
+-    if (st.spec.ok && !live) {
++    if (st.spec.ok && !live && !checkpoint.data->draft_carry.empty()) {
+         kvmem_scoped_ms carry_timer(st.mm_perf.carry_ms);
+         common_speculative_set_state(st.spec.spec, 0, checkpoint.data->draft_carry);
+     }
+@@ -436,9 +444,17 @@ static bool run_prefill_multimodal(ServerState & st, StreamIo * io, int * n_cach
+         llama_pos synced = 0;
+         if (st.spec.ok) {
+             common_speculative_get_state(st.spec.spec, 0, carry);
+-            if (carry.size() < sizeof(synced)) throw std::runtime_error("MTP carry missing");
+-            std::memcpy(&synced, carry.data(), sizeof(synced));
+-            if (synced != eval_end) throw std::runtime_error("MTP has unsynchronized visual rows");
++            if (carry.size() >= sizeof(synced)) {
++                std::memcpy(&synced, carry.data(), sizeof(synced));
++                if (synced != eval_end) throw std::runtime_error("MTP has unsynchronized visual rows");
++            } else if (st.spec_dflash) {
++                // A sidecar drafter (DFlash / DFlash2) has no shared-row carry:
++                // it owns an independent KV and the speculative layer re-syncs it
++                // on the next draft step. Only welded-nextn MTP carries rows.
++                synced = eval_end;
++            } else {
++                throw std::runtime_error("MTP carry missing");
++            }
+         }
+         kvmem_diag("KVMEM_TRACE multimodal_prefill context=%p prefix_hit_rows=%d lcp=%d new_text_rows=%u new_image_rows=%u replayed_rows=%u vision_encode_calls=%u encoder_ms=%.2f logical_cursor=%d model_cursor=%d mtp_synced_rows=%d cached_tail_rows=%u replay_reason=%s embedding_cache_bytes=%zu checkpoint_bytes=%zu\n",
+                 (void *) st.ctx, base.row, lcp, st.mm_new_text, st.mm_new_image, st.mm_replayed,
+diff --git a/tools/kvmem-spec.cpp b/tools/kvmem-spec.cpp
+index 196e6dd..61fe083 100644
+--- a/tools/kvmem-spec.cpp
++++ b/tools/kvmem-spec.cpp
+@@ -62,11 +62,28 @@ bool kvmem_cache_types_ok(ggml_type type_k, ggml_type type_v) {
+     return true;
+ }
+ 
++bool kvmem_draft_rewind(llama_context * ctx_dft, llama_pos pos, bool is_dflash) {
++    if (!ctx_dft) {
++        return true;
++    }
++    if (is_dflash) {
++        // Sidecar drafter (DFlash / DFlash2): plain KV owned by the speculative
++        // layer, so rewind it with the standard sequence API.
++        llama_memory_t mem = llama_get_memory(ctx_dft);
++        if (mem) {
++            llama_memory_seq_rm(mem, 0, pos, -1);
++        }
++        return true;
++    }
++    return llama_kvmem_remove_logical(ctx_dft, pos, -1);
++}
++
+ bool kvmem_spec_start(kvmem_spec_session & sess,
+                       llama_model * model_tgt,
+                       llama_context * ctx_tgt,
+                       const kvmem_spec_opts & opts) {
+     sess = kvmem_spec_session{};
++    sess.is_dflash = (opts.spec_type == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH);
+     if (!model_tgt || !ctx_tgt) {
+         fprintf(stderr, "kvmem_spec_start: missing target model/context\n");
+         return false;
+@@ -75,7 +92,9 @@ bool kvmem_spec_start(kvmem_spec_session & sess,
+     common_init();
+ 
+     common_params p;
+-    p.speculative.types = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
++    // Speculative flavour is chosen by the caller: draft-mtp (welded nextn head)
++    // or draft-dflash / draft-dspark (separate sidecar drafter GGUF).
++    p.speculative.types = { opts.spec_type };
+     p.speculative.draft.n_max = opts.n_max;
+     p.speculative.draft.n_min = opts.n_min;
+     p.speculative.draft.p_min = opts.p_min;
+@@ -330,7 +349,7 @@ kvmem_spec_gen_stats kvmem_spec_generate(
+                 }
+                 llama_memory_t mem_dft = llama_get_memory(ctx_dft);
+                 if (mem_dft) {
+-                    llama_kvmem_remove_logical(ctx_dft, (llama_pos) ckpt.n_tokens, -1);
++                    kvmem_draft_rewind(ctx_dft, (llama_pos) ckpt.n_tokens, sess.is_dflash);
+                 }
+             }
+         }
+@@ -402,7 +421,7 @@ kvmem_spec_gen_stats kvmem_spec_generate(
+                 ckpt.load_dft(ctx_dft, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                 llama_memory_t mem_dft = llama_get_memory(ctx_dft);
+                 if (mem_dft) {
+-                    llama_kvmem_remove_logical(ctx_dft, (llama_pos) ckpt.n_tokens, -1);
++                    kvmem_draft_rewind(ctx_dft, (llama_pos) ckpt.n_tokens, sess.is_dflash);
+                 }
+             }
+             prompt_tgt.resize((size_t) ckpt.n_tokens);
+@@ -418,7 +437,7 @@ kvmem_spec_gen_stats kvmem_spec_generate(
+                 if (!transaction.commit(0)) st.failed = true;
+                 n_past = logical_positions[0];
+                 if (!llama_kvmem_remove_logical(ctx_tgt, n_past, -1) ||
+-                        (ctx_dft && !llama_kvmem_remove_logical(ctx_dft, n_past, -1))) st.failed = true;
++                        (ctx_dft && !kvmem_draft_rewind(ctx_dft, n_past, sess.is_dflash))) st.failed = true;
+                 llama_kvmem_truncate_cached(n_past);
+                 if (!driver_ckpt.empty()) common_speculative_set_state(spec, seq_id, driver_ckpt);
+             }
+@@ -444,7 +463,7 @@ kvmem_spec_gen_stats kvmem_spec_generate(
+ 
+         if (sess.use_gdn_replay) {
+             if (!llama_kvmem_remove_logical(ctx_tgt, n_past, -1) ||
+-                    (ctx_dft && !llama_kvmem_remove_logical(ctx_dft, n_past, -1))) {
++                    (ctx_dft && !kvmem_draft_rewind(ctx_dft, n_past, sess.is_dflash))) {
+                 st.failed = true;
+                 break;
+             }
+@@ -476,7 +495,7 @@ kvmem_spec_gen_stats kvmem_spec_generate(
+             if (ctx_dft) {
+                 llama_memory_t mem_dft = llama_get_memory(ctx_dft);
+                 if (mem_dft) {
+-                    llama_kvmem_remove_logical(ctx_dft, n_past, -1);
++                    kvmem_draft_rewind(ctx_dft, n_past, sess.is_dflash);
+                 }
+             }
+         }
+diff --git a/tools/kvmem-spec.h b/tools/kvmem-spec.h
+index 302b5f0..b3c7abe 100644
+--- a/tools/kvmem-spec.h
++++ b/tools/kvmem-spec.h
+@@ -25,6 +25,9 @@ struct kvmem_spec_opts {
+     llama_flash_attn_type flash_attn = LLAMA_FLASH_ATTN_TYPE_AUTO;
+     bool    kvmem_enabled = false;
+     std::string draft_model; // optional sidecar GGUF; empty = welded nextn
++    // Speculative decoding flavour. draft-mtp uses the target GGUF's welded
++    // nextn head; draft-dflash / draft-dspark run a separate sidecar drafter.
++    common_speculative_type spec_type = COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
+     ggml_type type_k = GGML_TYPE_Q8_0;
+     ggml_type type_v = GGML_TYPE_Q8_0;
+     ggml_type draft_type = GGML_TYPE_COUNT; // inherit target K/V types unless overridden
+@@ -44,10 +47,18 @@ struct kvmem_spec_session {
+     bool use_ckpt_tgt = false;
+     bool use_ckpt_dft = false;
+     bool use_gdn_replay = false;
++    // A sidecar drafter (DFlash / DFlash2) owns a plain, non-KVMem KV cache and
++    // must be rewound with the standard llama sequence API. A welded-nextn MTP
++    // draft shares the target's KVMem memory instead.
++    bool is_dflash = false;
+     uint32_t n_rs_tgt = 0;
+     bool ok = false;
+ };
+ 
++// Rewind the draft context to `pos`. MTP goes through the KVMem logical
++// interface; a sidecar drafter (is_dflash) uses llama_memory_seq_rm.
++bool kvmem_draft_rewind(llama_context * ctx_dft, llama_pos pos, bool is_dflash);
++
+ bool kvmem_spec_start(kvmem_spec_session & sess,
+                       llama_model * model_tgt,
+                       llama_context * ctx_tgt,
+diff --git a/tools/llama-kvmem-server.cpp b/tools/llama-kvmem-server.cpp
+index 958e803..3e409bc 100644
+--- a/tools/llama-kvmem-server.cpp
++++ b/tools/llama-kvmem-server.cpp
+@@ -125,7 +125,8 @@ static void print_usage(const char * argv0) {
+             "  --kv-dtype NAME            GPU KV cache type for K and V: f16 | f32 | q8_0 | q5_0 | q4_0 (default q8_0)\n"
+             "  -ctk, --cache-type-k TYPE  GPU K cache type (llama.cpp name; default q8_0)\n"
+             "  -ctv, --cache-type-v TYPE  GPU V cache type (quantized: independently q8_0 | q5_0 | q4_0)\n"
+-            "  --spec-type TYPE           none | draft-mtp (default none)\n"
++            "  --spec-type TYPE           none | draft-mtp | draft-dflash (default none)\n"
++  "  --model-draft PATH, -md    sidecar drafter GGUF (required by draft-dflash)\n"
+             "  --spec-kv-dtype TYPE       MTP K/V type (default f16)\n"
+             "  --spec-draft-n-max N       MTP draft tokens (default 3)\n"
+             "  --spec-draft-p-min P       min draft probability (default 0)\n"
+@@ -234,6 +235,9 @@ struct ServerState {
+     ggml_type cache_type_v = GGML_TYPE_Q8_0;
+     ggml_type spec_cache_type = GGML_TYPE_F16;
+     bool spec_mtp = false;
++    // DFlash/DFlash2 speculative decoding: a separate sidecar drafter GGUF.
++    bool spec_dflash = false;
++    std::string spec_draft_model;
+     int spec_n_max = 3;
+     float spec_p_min = 0.0f;
+     bool enable_thinking_default = false;
+@@ -374,9 +378,14 @@ static bool gdn_sync_to(ServerState & st, const std::vector<llama_token> & promp
+     }
+     const int from = ckpt_pos + 1;
+     if (st.spec.ok) {
+-        if (!saved_carry || saved_carry->empty()) return false;
+-        common_speculative_set_state(st.spec.spec, 0, *saved_carry);
+-        if (!llama_kvmem_remove_logical(st.spec.ctx_dft, from, -1)) return false;
++        // Welded-nextn MTP shares rows with the target and needs an explicit draft
++        // rewind here; a sidecar drafter (DFlash) has a plain KV that is rewound
++        // through the standard sequence API. No carry state exists for DFlash.
++        if (!st.spec_dflash) {
++            if (!saved_carry || saved_carry->empty()) return false;
++            common_speculative_set_state(st.spec.spec, 0, *saved_carry);
++        }
++        if (!kvmem_draft_rewind(st.spec.ctx_dft, from, st.spec_dflash)) return false;
+     }
+     if (from < n_past) {
+         llama_kvmem_set_replay(true);
+@@ -622,10 +631,10 @@ static bool run_prefill_retrieval(ServerState & st, const std::vector<llama_toke
+             llama_memory_seq_rm(mem, 0, n_past, -1);
+         }
+         if (st.spec.ctx_dft) {
+-            llama_memory_t md = llama_get_memory(st.spec.ctx_dft);
+-            if (md) {
+-                llama_memory_seq_rm(md, 0, n_past, -1);
+-            }
++            // MTP draft rows mirror the target; a DFlash drafter keeps its own KV
++            // in the speculative layer. Both are rewound through the helper, which
++            // picks the right mechanism (KVMem logical vs standard sequence API).
++            kvmem_draft_rewind(st.spec.ctx_dft, n_past, st.spec_dflash);
+         }
+         if (st.kparams.enabled) {
+             llama_kvmem_truncate_cached((uint32_t) n_past);
+@@ -1730,12 +1739,19 @@ int main(int argc, char ** argv) {
+             const char * t = need(arg);
+             if (eq(t, "draft-mtp")) {
+                 st.spec_mtp = true;
++                st.spec_dflash = false;
++            } else if (eq(t, "draft-dflash")) {
++                st.spec_dflash = true;
++                st.spec_mtp = false;
+             } else if (eq(t, "none")) {
+                 st.spec_mtp = false;
++                st.spec_dflash = false;
+             } else {
+-                fprintf(stderr, "unsupported --spec-type %s (P7-0: draft-mtp|none)\n", t);
++                fprintf(stderr, "unsupported --spec-type %s (want draft-mtp | draft-dflash | none)\n", t);
+                 return 1;
+             }
++        } else if (eq(arg, "--model-draft") || eq(arg, "-md")) {
++            st.spec_draft_model = need(arg);
+         } else if (eq(arg, "--spec-draft-n-max")) {
+             st.spec_n_max = kvmem_cli_int(arg, need(arg));
+         } else if (eq(arg, "--spec-draft-p-min")) {
+@@ -1858,6 +1874,16 @@ int main(int argc, char ** argv) {
+         fprintf(stderr, "KVMEM_STARTUP_ERROR replay MTP requires --spec-draft-n-max in 1..5\n");
+         return 1;
+     }
++    // DFlash runs a separate sidecar drafter; it cannot reuse the welded nextn head.
++    if (st.spec_dflash && st.spec_draft_model.empty()) {
++        fprintf(stderr, "KVMEM_STARTUP_ERROR --spec-type draft-dflash requires --model-draft <draft.gguf>\n");
++        return 1;
++    }
++    if (st.spec_dflash && st.spec_n_max < 1) {
++        fprintf(stderr, "KVMEM_STARTUP_ERROR draft-dflash requires --spec-draft-n-max >= 1\n");
++        return 1;
++    }
++    const bool spec_on = st.spec_mtp || st.spec_dflash;
+ 
+     setvbuf(stderr, nullptr, _IONBF, 0);
+     setvbuf(stdout, nullptr, _IONBF, 0);
+@@ -1912,7 +1938,8 @@ int main(int argc, char ** argv) {
+         {"kv", {{"k", ggml_type_name(st.cache_type_k)}, {"v", ggml_type_name(st.cache_type_v)}}},
+         {"kvmem", {{"enabled", st.kparams.enabled}, {"budget", st.kparams.budget}, {"gen_reserve", st.kparams.gen_reserve},
+                    {"sink_tokens", st.kparams.sink_tokens}, {"block_tokens", st.kparams.block_tokens}}},
+-        {"spec_type", st.spec_mtp ? "draft-mtp" : "none"},
++        {"spec_type", st.spec_mtp ? "draft-mtp" : (st.spec_dflash ? "draft-dflash" : "none")},
++        {"spec_draft_model", st.spec_dflash ? st.spec_draft_model : ""},
+         {"vision", {{"enabled", !mmproj_path.empty()}, {"projector", mmproj_path}, {"gpu", mmproj_gpu}}},
+         {"http", {{"host", host}, {"port", port}, {"timeout", options.timeout}, {"slots", 1}}},
+         {"auth", {{"enabled", !options.api_keys.empty()}, {"key_count", options.api_keys.size()}}},
+@@ -1944,7 +1971,7 @@ int main(int argc, char ** argv) {
+     cparams.n_seq_max = 1;
+     cparams.type_k = st.cache_type_k;
+     cparams.type_v = st.cache_type_v;
+-    if (st.spec_mtp) {
++    if (spec_on) {
+         const uint32_t n_out = (uint32_t) (1 + std::max(0, st.spec_n_max));
+         cparams.n_outputs_max = n_out;
+         cparams.n_outputs_max_per_seq = n_out;
+@@ -1958,8 +1985,13 @@ int main(int argc, char ** argv) {
+     kvmem_diag("KVMEM_CONTEXT target threads=%d threads_batch=%d ubatch=%u flash_attn_requested=%s\n",
+             llama_n_threads(st.ctx), llama_n_threads_batch(st.ctx), llama_n_ubatch(st.ctx),
+             llama_flash_attn_type_name(cparams.flash_attn_type));
+-    if (st.spec_mtp) {
++    if (spec_on) {
+         kvmem_spec_opts sopts;
++        sopts.spec_type = st.spec_dflash ? COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH
++                                         : COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
++        if (!st.spec_draft_model.empty()) {
++            sopts.draft_model = st.spec_draft_model;
++        }
+         sopts.n_max = st.spec_n_max;
+         sopts.p_min = st.spec_p_min;
+         sopts.n_gpu_layers = ngl;
+@@ -2745,7 +2777,7 @@ int main(int argc, char ** argv) {
+     LOG_INF("srv    llama-kvmem-server listening on http://%s:%d  model=%s kvmem=%d method=%s n_ctx=%d spec=%s n_max=%d think=%d rbudget=%d qmax=%d\n",
+             host.c_str(), port, st.model_name.c_str(), (int) st.kparams.enabled,
+             st.kparams.method == 1 ? "retrieval" : "recency", n_ctx,
+-            st.spec.ok ? "draft-mtp" : "off", st.spec_n_max, (int) st.enable_thinking_default,
++            st.spec.ok ? (st.spec_dflash ? "draft-dflash" : "draft-mtp") : "off", st.spec_n_max, (int) st.enable_thinking_default,
+             st.reasoning_budget_default, st.query_max_tokens);
+     if (!svr.listen_after_bind()) {
+         fprintf(stderr, "listen failed\n");
