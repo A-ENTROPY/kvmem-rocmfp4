@@ -6,7 +6,7 @@
 >
 > One llama.cpp build that combines three things: **KVMem** tiered KV (constant VRAM, up to 256K context), **ROCmFP4** AMD-specific 4-bit formats (ggml types 100/101), and **DFlash2** block-diffusion speculative decoding.
 
-📦 **开箱即用的预编译包见 [Releases](../../releases)** —— Windows x64 + ROCm 7.2，已含运行库，无需自己编译。
+📦 **开箱即用的预编译包：[v1.0.0 Release](https://github.com/A-ENTROPY/kvmem-rocmfp4/releases/tag/v1.0.0)** —— Windows x64 + ROCm 7.2，已含运行库（229 MB），无需自己编译。
 
 ---
 
@@ -49,7 +49,7 @@
 
 ### 方式一：下载预编译包（推荐）
 
-1. 到 [Releases](../../releases) 下载 `kvmem-rocmfp4-gfx1100-windows-rocm7.2.zip` 并解压
+1. 到 [Releases](../../releases) 下载 `kvmem-rocmfp4-gfx1100-windows-rocm7.2-selfcontained.zip` 并解压
 2. 下载模型（见下方[测试过的模型](#-测试过的模型--tested-models)）
 3. 运行：
 
