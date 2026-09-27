@@ -57,8 +57,15 @@ if (-not $Lite) {
 # 启动脚本与说明
 Copy-Item (Join-Path $repoRoot 'release/start-kvmem.bat') $stage -Force
 Copy-Item (Join-Path $repoRoot 'release/start-kvmem.ps1') $stage -Force
+Copy-Item (Join-Path $repoRoot 'release/start-panel.bat') $stage -Force
+Copy-Item (Join-Path $repoRoot 'release/start-panel.ps1') $stage -Force
+# 中文调参面板（Node.js 服务）
+$panelDst = Join-Path $stage 'panel'
+New-Item -ItemType Directory -Force -Path $panelDst | Out-Null
+Copy-Item (Join-Path $repoRoot 'panel/*') $panelDst -Force -Recurse
 Copy-Item (Join-Path $repoRoot 'release/读我用我.txt')     $stage -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $repoRoot 'LICENSE')                  $stage -Force
+Copy-Item (Join-Path $repoRoot 'README.md')                $stage -Force
 Copy-Item (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md')   $stage -Force
 
 # models/ 空目录 + 下载说明（启动脚本会自动扫描这里）

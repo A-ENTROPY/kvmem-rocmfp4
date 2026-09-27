@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KVMem 参数设置</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --text:#e8eaed; --muted:#9aa3b2; --accent:#4f8cff; --accent2:#2f6fe4;
+    --ok:#31c48d; --warn:#f0a20b; --err:#ef5350; --chip:#232936;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.6 "Microsoft YaHei UI","Microsoft YaHei",system-ui,-apple-system,sans-serif}
+  a{color:var(--accent);text-decoration:none}
+  header{position:sticky;top:0;z-index:20;background:rgba(15,17,21,.94);
+         backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:12px 20px}
+  .hrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  h1{font-size:17px;margin:0;font-weight:600}
+  .badge{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .badge.on{background:rgba(49,196,141,.15);color:var(--ok);border:1px solid rgba(49,196,141,.4)}
+  .badge.off{background:rgba(239,83,80,.15);color:var(--err);border:1px solid rgba(239,83,80,.4)}
+  .badge.wait{background:rgba(240,162,11,.15);color:var(--warn);border:1px solid rgba(240,162,11,.4)}
+  .spacer{flex:1}
+  .meta{color:var(--muted);font-size:12.5px}
+  .meta b{color:var(--text);font-weight:600}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);
+         padding:8px 14px;border-radius:8px;font-size:13.5px;font-family:inherit;transition:.15s}
+  button:hover{background:#262c38;border-color:#3a4150}
+  button.primary{background:var(--accent2);border-color:var(--accent2);color:#fff;font-weight:600}
+  button.primary:hover{background:var(--accent)}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  main{max-width:1180px;margin:0 auto;padding:20px}
+  .nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;position:sticky;top:112px;z-index:15;
+       background:var(--bg);padding:8px 0}
+  .nav a{padding:6px 12px;border-radius:20px;background:var(--panel);border:1px solid var(--line);
+         color:var(--muted);font-size:13px}
+  .nav a:hover{color:var(--text);border-color:var(--accent)}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:16px;overflow:hidden}
+  section > .shead{padding:14px 18px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .stitle{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .sdesc{color:var(--muted);font-size:12.5px;margin-top:4px}
+  .rows{padding:6px 18px 14px}
+  .row{display:grid;grid-template-columns:290px 1fr;gap:16px;padding:11px 0;border-bottom:1px dashed rgba(42,47,58,.6)}
+  .row:last-child{border-bottom:none}
+  .row.hide{display:none}
+  @media(max-width:860px){.row{grid-template-columns:1fr;gap:6px}}
+  .lab{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .req{color:var(--err);font-size:12px}
+  .tag{font-size:11px;padding:1px 7px;border-radius:10px;background:var(--chip);color:var(--muted);border:1px solid var(--line)}
+  .tag.restart{color:var(--warn);border-color:rgba(240,162,11,.35)}
+  .help{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.55}
+  .help code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:11.5px;color:#ffd479}
+  input[type=text],input[type=number],select,textarea{
+    width:100%;background:#11141a;border:1px solid var(--line);color:var(--text);
+    padding:9px 11px;border-radius:8px;font-size:13.5px;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .inline select{flex:1;min-width:180px}
+  .switch{position:relative;display:inline-block;width:48px;height:26px;flex:none}
+  .switch input{display:none}
+  .slider{position:absolute;inset:0;background:#2b3140;border-radius:26px;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;top:3px;background:#8b94a6;
+                 border-radius:50%;transition:.2s}
+  input:checked + .slider{background:rgba(79,140,255,.35)}
+  input:checked + .slider:before{transform:translateX(22px);background:var(--accent)}
+  .def{color:var(--muted);font-size:11.5px;cursor:pointer;text-decoration:underline dotted;white-space:nowrap}
+  .def:hover{color:var(--accent)}
+  #status{margin-top:8px}
+  .cmdbox{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+          font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;color:#a8e6a3;
+          white-space:pre-wrap;word-break:break-all;max-height:190px;overflow:auto}
+  .logbox{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+          font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;color:#c9d1d9;
+          white-space:pre-wrap;max-height:420px;overflow:auto;line-height:1.5}
+  #toast{position:fixed;right:20px;bottom:20px;z-index:100;display:flex;flex-direction:column;gap:8px}
+  .msg{padding:11px 16px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);
+       box-shadow:0 6px 22px rgba(0,0,0,.45);font-size:13.5px;animation:pop .2s}
+  .msg.ok{border-color:rgba(49,196,141,.5)}
+  .msg.err{border-color:rgba(239,83,80,.5)}
+  .msg.warn{border-color:rgba(240,162,11,.5)}
+  @keyframes pop{from{opacity:0;transform:translateY(8px)}}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);
+        border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  details.adv{margin-top:8px}
+  details.adv summary{cursor:pointer;color:var(--muted);font-size:12.5px;padding:6px 0}
+  .hint-bar{background:rgba(79,140,255,.08);border:1px solid rgba(79,140,255,.3);border-radius:10px;
+            padding:11px 14px;font-size:13px;color:#c7d6f5;margin-bottom:16px}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <h1>⚙️ KVMem 参数设置</h1>
+    <span id="badge" class="badge wait">检测中…</span>
+    <span class="spacer"></span>
+    <span class="meta" id="meta"></span>
+  </div>
+  <div class="toolbar">
+    <button class="primary" id="btnApply">💾 保存并重启生效</button>
+    <button id="btnSave">保存配置</button>
+    <button id="btnRestart">🔄 仅重启</button>
+    <button id="btnStart">▶️ 启动服务</button>
+    <button id="btnStop">⏹️ 停止服务</button>
+    <a href="#" id="btnChat" target="_blank"><button class="ghost">💬 打开聊天界面</button></a>
+    <button class="ghost" id="btnLog">📋 查看日志</button>
+    <button class="ghost" id="btnCmd">🖥️ 查看命令行</button>
+    <button class="ghost" id="btnReset">↺ 恢复本机默认</button>
+  </div>
+  <div id="status" class="meta"></div>
+</header>
+
+<main>
+  <div class="hint-bar">
+    <b>说明：</b>服务端参数在启动时读取，修改后需<b>「保存并重启生效」</b>（重新加载模型约 30–60 秒）。
+    配置持久保存在解压目录的 <code>config.json</code>，下次启动自动沿用。带
+    <span class="tag restart">需重启</span> 标记的参数重启后才起作用。
+  </div>
+
+  <div id="cmdPanel" style="display:none;margin-bottom:16px">
+    <div class="shead" style="background:var(--panel);border:1px solid var(--line);border-radius:12px 12px 0 0;padding:12px 18px">
+      <div class="stitle">🖥️ 当前等效命令行</div>
+      <div class="sdesc">这是保存后将要执行的完整命令，可直接复制到终端手动运行。</div>
+    </div>
+    <div class="cmdbox" id="cmdText"></div>
+  </div>
+
+  <div id="logPanel" style="display:none;margin-bottom:16px">
+    <div class="shead" style="background:var(--panel);border:1px solid var(--line);border-radius:12px 12px 0 0;padding:12px 18px">
+      <div class="stitle">📋 服务日志 <button class="ghost" style="margin-left:auto;padding:4px 10px;font-size:12px" id="btnLogRefresh">刷新</button></div>
+    </div>
+    <div class="logbox" id="logText">加载中…</div>
+  </div>
+
+  <div class="nav" id="nav"></div>
+  <div id="form"></div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const API = location.origin;
+let SCHEMA = [], DEFAULTS = {}, CFG = {}, SHOW_ADV = false;
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function toast(text, kind = 'ok', ms = 3600) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + kind;
+  d.innerHTML = text;
+  $('#toast').appendChild(d);
+  setTimeout(() => d.remove(), ms);
+}
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  const t = await r.text();
+  try { return JSON.parse(t); } catch { return { raw: t }; }
+}
+
+// ---------- 表单渲染 ----------
+function renderNav() {
+  $('#nav').innerHTML = SCHEMA.map((g) =>
+    `<a href="#g_${g.group}">${g.icon} ${esc(g.title)}</a>`).join('');
+}
+
+function fieldHtml(p) {
+  const raw = CFG[p.id];
+  const val = raw === undefined || raw === null ? '' : raw;
+  const id = 'f_' + p.id;
+  const tags = `<span class="tag restart">需重启</span>`;
+  const def = DEFAULTS[p.id];
+  const defHint = p.optional ? '（留空=用服务端默认）' : '';
+
+  let control = '';
+  if (p.type === 'bool') {
+    control = `<label class="switch"><input type="checkbox" id="${id}" data-id="${p.id}" ${val === true ? 'checked' : ''}/>
+               <span class="slider"></span></label>`;
+  } else if (p.type === 'model' || p.type === 'mmproj') {
+    control = `<div class="inline">
+        <select id="sel_${p.id}" data-id="${p.id}" data-sel="1"></select>
+        <button class="ghost" data-browse="${p.id}" style="padding:7px 11px">扫描模型</button>
+      </div>
+      <input type="text" id="${id}" data-id="${p.id}" value="${esc(val)}" style="margin-top:6px"
+             placeholder="${p.type === 'model' ? '主模型 GGUF 完整路径' : '留空则为纯文本模式'}" />`;
+  } else if (p.type === 'select') {
+    const opts = (p.options || []).map((o) => `<option value="${esc(o)}" ${String(val) === String(o) ? 'selected' : ''}>${esc(o)}</option>`).join('');
+    control = `<select id="${id}" data-id="${p.id}">${p.optional ? `<option value="" ${val === '' ? 'selected' : ''}>（留空，用服务端默认）</option>` : ''}${opts}</select>`;
+  } else if (p.type === 'int' || p.type === 'float') {
+    const step = p.step ?? (p.type === 'int' ? 1 : 0.01);
+    control = `<input type="number" id="${id}" data-id="${p.id}" value="${esc(val)}"
+                 step="${step}" ${p.min !== undefined ? `min="${p.min}"` : ''} ${p.max !== undefined ? `max="${p.max}"` : ''}
+                 placeholder="${p.optional ? '留空 = 服务端默认' : ''}" />`;
+  } else if (p.id === 'chat_template') {
+    control = `<textarea id="${id}" data-id="${p.id}" rows="3" placeholder="留空使用模型自带模板">${esc(val)}</textarea>`;
+  } else {
+    control = `<input type="text" id="${id}" data-id="${p.id}" value="${esc(val)}" placeholder="${p.optional ? '留空 = 服务端默认' : ''}" />`;
+  }
+
+  return `<div class="row ${p.advanced ? 'advrow' : ''}" data-adv="${p.advanced ? 1 : 0}" id="row_${p.id}">
+    <div>
+      <div class="lab">${esc(p.label)} ${p.required ? '<span class="req">*必填</span>' : ''} ${tags}</div>
+      <div class="help">${p.help || ''}
+        ${def !== undefined && def !== '' && def !== null ? `<br>默认值：<code>${esc(p.type === 'bool' ? (def ? '开' : '关') : def)}</code>${defHint}` : defHint ? `<br>${defHint}` : ''}
+        ${p.flag ? `<br>对应参数：<code>${esc(p.flag)}</code>${p.short ? ` / <code>${esc(p.short)}</code>` : ''}` : ''}
+      </div>
+    </div>
+    <div>${control}</div>
+  </div>`;
+}
+
+function renderForm() {
+  $('#form').innerHTML = SCHEMA.map((g) => {
+    const basic = g.params.filter((p) => !p.advanced);
+    const adv = g.params.filter((p) => p.advanced);
+    return `<section id="g_${g.group}">
+      <div class="shead">
+        <div class="stitle">${g.icon} ${esc(g.title)}</div>
+        <div class="sdesc">${esc(g.desc || '')}</div>
+      </div>
+      <div class="rows">
+        ${basic.map(fieldHtml).join('')}
+        ${adv.length ? `<details class="adv" ${SHOW_ADV ? 'open' : ''}>
+            <summary>▸ 高级选项（${adv.length} 项，一般无需修改）</summary>
+            ${adv.map(fieldHtml).join('')}
+          </details>` : ''}
+      </div>
+    </section>`;
+  }).join('');
+
+  // 事件绑定
+  document.querySelectorAll('[data-id]').forEach((el) => {
+    const id = el.dataset.id;
+    const ev = (el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input';
+    el.addEventListener(ev, () => {
+      const p = SCHEMA.flatMap((g) => g.params).find((x) => x.id === id);
+      if (p && p.type === 'bool') CFG[id] = el.checked;
+      else if (p && (p.type === 'int')) CFG[id] = el.value === '' ? '' : parseInt(el.value, 10);
+      else if (p && (p.type === 'float')) CFG[id] = el.value === '' ? '' : parseFloat(el.value);
+      else CFG[id] = el.value;
+      if (p && (p.type === 'model' || p.type === 'mmproj')) {
+        const sel = document.getElementById('sel_' + id);
+        if (sel) sel.value = el.value;
+      }
+    });
+  });
+  document.querySelectorAll('[data-sel]').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const id = sel.dataset.id;
+      const inp = document.getElementById('f_' + id);
+      if (inp) inp.value = sel.value;
+      CFG[id] = sel.value;
+    });
+  });
+  document.querySelectorAll('[data-browse]').forEach((b) => {
+    b.addEventListener('click', () => loadModels(b.dataset.browse));
+  });
+}
+
+async function loadModels(which) {
+  const m = await api('/api/models');
+  const id = which || 'model';
+  const sel = document.getElementById('sel_' + id);
+  if (!sel) return;
+  const list = id === 'mmproj' ? (m.mmproj || []) : (m.main || []);
+  sel.innerHTML = `<option value="">（点击右侧“扫描模型”选择）</option>` + list.map((x) =>
+    `<option value="${esc(x.path)}">${esc(x.name)} — ${x.mb} MB</option>`).join('');
+  if (!list.length) { toast('models 目录下没有找到 .gguf 文件', 'warn'); return; }
+  sel.value = CFG[id] || '';
+  toast(`已扫描到 ${list.length} 个${id === 'mmproj' ? '视觉投影器' : '主模型'}`, 'ok');
+}
+
+// ---------- 状态 ----------
+async function refreshStatus() {
+  const s = await api('/api/status');
+  const b = $('#badge');
+  if (s.starting) { b.className = 'badge wait'; b.innerHTML = '<span class="spin"></span> 正在加载模型…'; }
+  else if (s.running) { b.className = 'badge on'; b.textContent = '● 运行中'; }
+  else { b.className = 'badge off'; b.textContent = '● 已停止'; }
+
+  const parts = [];
+  if (s.model) parts.push(`模型：<b>${esc(s.model)}</b>`);
+  parts.push(`端口：<b>${s.port}</b>`);
+  if (s.pid) parts.push(`PID：<b>${s.pid}</b>`);
+  if (s.running && s.uptimeSec) parts.push(`已运行 <b>${s.uptimeSec}</b> 秒`);
+  $('#meta').innerHTML = parts.join(' · ');
+  $('#status').innerHTML = s.kvmemInfo
+    ? `运行参数：<code>${esc(s.kvmemInfo)}</code>`
+    : (s.lastError ? `<span style="color:var(--err)">${esc(s.lastError)}</span>` : '');
+  $('#btnChat').href = s.chatUrl;
+  return s;
+}
+
+async function save() {
+  await api('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(CFG) });
+}
+
+async function apply() {
+  const btns = document.querySelectorAll('button');
+  btns.forEach((x) => (x.disabled = true));
+  $('#badge').className = 'badge wait';
+  $('#badge').innerHTML = '<span class="spin"></span> 正在重启并加载模型…';
+  toast('正在保存配置并重启服务，加载模型约需 30–60 秒，请稍候…', 'warn', 9000);
+  const r = await api('/api/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(CFG) });
+  btns.forEach((x) => (x.disabled = false));
+  if (r.ok) {
+    toast('✅ 配置已保存并生效！服务已就绪。', 'ok', 6000);
+    if (r.command) $('#cmdText').textContent = r.command;
+    await loadCfgAndRedraw();
+  } else {
+    toast('❌ 重启失败：' + esc(r.error || '服务未能就绪，请查看日志'), 'err', 9000);
+    showLog();
+  }
+  refreshStatus();
+}
+
+async function doRestart() {
+  toast('正在重启服务…', 'warn', 5000);
+  const r = await api('/api/restart', { method: 'POST' });
+  toast(r.ok ? '✅ 服务已重启并就绪' : '❌ 重启失败，请查看日志', r.ok ? 'ok' : 'err', 6000);
+  refreshStatus();
+}
+
+async function showLog() {
+  $('#logPanel').style.display = 'block';
+  $('#logText').textContent = '加载中…';
+  const r = await api('/api/log?tail=200');
+  $('#logText').textContent = r.log || '（暂无日志）';
+  $('#logPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function showCmd() {
+  const r = await api('/api/command');
+  $('#cmdPanel').style.display = 'block';
+  $('#cmdText').textContent = r.command || '';
+  $('#cmdPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function loadCfgAndRedraw() {
+  CFG = await api('/api/config');
+  renderForm();
+}
+
+async function init() {
+  const sc = await api('/api/schema');
+  SCHEMA = sc.groups; DEFAULTS = sc.defaults;
+  CFG = await api('/api/config');
+  renderNav();
+  renderForm();
+  await refreshStatus();
+  setInterval(refreshStatus, 4000);
+}
+
+$('#btnApply').onclick = apply;
+$('#btnSave').onclick = async () => { await save(); toast('✅ 配置已保存到 config.json（重启后才会生效）', 'ok'); };
+$('#btnRestart').onclick = doRestart;
+$('#btnStart').onclick = async () => {
+  toast('正在启动服务…', 'warn', 5000);
+  const r = await api('/api/start', { method: 'POST' });
+  toast(r.ok ? '✅ 服务已启动' : '❌ 启动失败', r.ok ? 'ok' : 'err', 6000); refreshStatus();
+};
+$('#btnStop').onclick = async () => {
+  if (!confirm('确定要停止 KVMem 服务吗？')) return;
+  await api('/api/stop', { method: 'POST' });
+  toast('服务已停止', 'warn'); refreshStatus();
+};
+$('#btnLog').onclick = () => { const p = $('#logPanel'); if (p.style.display === 'block') p.style.display = 'none'; else showLog(); };
+$('#btnLogRefresh').onclick = showLog;
+$('#btnCmd').onclick = () => { const p = $('#cmdPanel'); if (p.style.display === 'block') p.style.display = 'none'; else showCmd(); };
+$('#btnReset').onclick = async () => {
+  if (!confirm('恢复为本机推荐默认值？当前修改将丢失（需点“保存并重启生效”才会真正生效）。')) return;
+  const r = await api('/api/reset', { method: 'POST' });
+  CFG = r.config; renderForm(); toast('已恢复默认值', 'ok');
+};
+
+init();
+</script>
+</body>
+</html>
