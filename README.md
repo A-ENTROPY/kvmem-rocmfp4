@@ -1,6 +1,6 @@
 # KVMem + ROCmFP4 + DFlash2 for AMD
 
-**在 AMD Radeon（gfx1100 / gfx1151）上跑满 256K 上下文的 Qwen3.8-27B，并用 DFlash2 把解码速度推到 48–53 tok/s。**
+**在 AMD Radeon（gfx1100 / gfx1151）上跑满 256K 上下文的 Qwen3.8-27B，并用 DFlash2 把解码速度推到 48-65 tok/s。**
 
 > 把三件事合进一个 llama.cpp 构建：**[KVMem](https://github.com/kvmem/kvmem-llama.cpp)** 的分层 KV（显存恒定、上下文可到 256K）、**[ROCmFP4](https://github.com/charlie12345/rocmfp4-llama)** 的 AMD 专用 4-bit 量化格式（类型 100/101），以及 **[DFlash2](https://inco.ai/blog/dflash2/)** 的块扩散并行草稿推测解码。
 >
@@ -37,8 +37,8 @@
 | **+ DFlash2 (`--spec-draft-n-max 3`)** | **48.1 tok/s（+24%）** | 40.5 tok/s（+4%） |
 | + DFlash2 (`--spec-draft-n-max 5`) | 45.8 tok/s | 36.7 tok/s |
 
-- **峰值**：短上下文下 3 秒窗口瞬时速率最高观测到 **53.0 tok/s**
-- **草稿数用 3 最好**；调到 5 或 7 反而更慢（草稿接受率下降 37% → 19%，验证开销抵消收益）
+- **峰值**：短上下文下 3 秒窗口瞬时速率最高观测到 **65.0 tok/s**
+- **草稿数用 4 最好**；调到 5 或 7 反而更慢（草稿接受率下降 37% → 19%，验证开销抵消收益）
 - 数字为逐请求归因到服务端 `eval time` 计时行，非平均值套算
 
 > 另：**256K 上下文本身几乎没有速度惩罚**（同条件下 32K 时 51.5 vs 256K 时 52.0 tok/s），这正是 KVMem 的核心价值。
